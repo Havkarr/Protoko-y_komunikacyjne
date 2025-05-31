@@ -13,7 +13,8 @@
 #define SPI_MODE SPI_MODE_0
 #define SPI_BITS_PER_WORD 8
 #define SPI_SPEED 50000  // 50 kHz
-#define BUFFER_SIZE 256
+#define BUFFER_SIZE 257 // Jeden dodatkowy bajt na przesunięcie
+#define WAIT_TIME 1
 
 int init_spi_device(const char *device, uint8_t mode, uint8_t bits, uint32_t speed) {
     int fd = open(device, O_RDWR);
@@ -56,7 +57,7 @@ int transfer_spi_data(struct spi_ioc_transfer tr, int slave_1) {
     }
 
     // Zaczekaj chwilę, aby dane mogły być przetworzone
-    sleep(1);
+    sleep(WAIT_TIME);
 
     // Odbierz dane z slave-a
     ret = ioctl(slave_1, SPI_IOC_MESSAGE(1), &tr);
@@ -78,7 +79,7 @@ int main() {
     uint32_t speed = SPI_SPEED;
 
     // Bufory danych
-    uint8_t tx_buf[BUFFER_SIZE] = {0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6, 0xA7, 0xF8};
+    uint8_t tx_buf[BUFFER_SIZE] = {0x01, 0x03, 0x00, 0x01, 0x00, 0x01, 0xD5,0xCA};
     uint8_t rx_buf[BUFFER_SIZE] = {0};
 
     slave_1 = init_spi_device(SPI_DEVICE1, mode, bits, speed);
@@ -96,16 +97,29 @@ int main() {
 
     transfer_spi_data(tr, slave_1);
 
+    uint8_t shifted[BUFFER_SIZE] = {0};
+    for (int i = BUFFER_SIZE - 1; i > 0; i--) {
+        uint8_t high = (i > 0) ? (rx_buf[i - 1] << 4) : 0x00;
+        shifted[i-1] = (rx_buf[i] >> 4) | high;
+    }
+
     // Wyświetl odebrane dane
     printf("Received data:\n");
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < 15; i++) {
         printf("0x%02X ", rx_buf[i]);
     }
     printf("\n");
 
+    printf("Shifted data:\n");
+    for (int i = 0; i < 15; i++) {
+        printf("0x%02X ", shifted[i]);
+    }
+    printf("\n");
     // Zamknij urządzenie
     close(slave_1);
     // close(slave_2);
+
+  
 
     return EXIT_SUCCESS;
 }
