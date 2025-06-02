@@ -1,7 +1,6 @@
 #ifndef Parameters_h
 #define Parameters_h
 
-#define SLAVE_ID 1
 #define PIN_CS   5 // Slave select pin
 
 #define BUFF_SIZE 256 // Modbus frame length

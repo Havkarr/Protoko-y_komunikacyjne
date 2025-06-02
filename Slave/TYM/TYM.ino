@@ -50,14 +50,15 @@ void setup() {
   setBit(discrete_inputs, 3, true);
   
   Serial.println("ModBus RTU Slave initialized!");
-  Serial.println("Slave ID: " + String(slave_id));
   Serial.println("Buffer size: " + String(BUFFER_SIZE) + " bytes (4-byte aligned)");
   Serial.println("Max Coils: " + String(MAX_COILS));
   Serial.println("Max Discrete Inputs: " + String(MAX_DISCRETE_INPUTS));
   Serial.println("Max Holding Registers: " + String(MAX_HOLDING_REGS));
   Serial.println("Max Input Registers: " + String(MAX_INPUT_REGS));
 }
+
 size_t resp_len = 0;
+
 void loop() {
   if (transfer && !answer) {
     resp_len = receiveData();
