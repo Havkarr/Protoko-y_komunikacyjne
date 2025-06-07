@@ -1,0 +1,10 @@
+{
+    "files.associations": {
+        "iostream": "c",
+        "xstring": "c",
+        "xutility": "c",
+        "system_error": "c",
+        "stdint.h": "c",
+        "iterator": "c"
+    }
+}

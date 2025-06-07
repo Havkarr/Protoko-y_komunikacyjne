@@ -5,6 +5,8 @@
 #include "./Codes.h"
 #include "./Parameters.h"
 
+// Master źle odbiera wiadomości z kodami błedu
+
 uint8_t coils[MAX_COILS / 8 + 1] = { 0 };                       // Coils (Read/Write bits)
 uint8_t discrete_inputs[MAX_DISCRETE_INPUTS / 8 + 1] = { 0 };   // Discrete inputs (Read-only bits)
 uint16_t holding_registers[MAX_HOLDING_REGS] = { 0 };           // Holding registers (Read/Write)
@@ -33,22 +35,6 @@ bool getBit(uint8_t* array, uint16_t bit_address) {
 uint16_t readCoils(uint8_t* request, uint8_t* response) {
     uint16_t start_address = (request[1] << 8) | request[2];
     uint16_t quantity = (request[3] << 8) | request[4];
-
-    if (quantity < 1) {
-        Serial.println("quantity < 1");
-    }
-    else if (quantity > 2000) {
-        Serial.println("quantity > 2000");
-        Serial.print("quantity:");
-        Serial.println(quantity);
-    }
-    else if (start_address + quantity > MAX_COILS) {
-        Serial.print("start_address:");
-        Serial.println(start_address);
-        Serial.print("quantity:");
-        Serial.println(quantity);
-        Serial.println("start_address + quantity > MAX_COILS");
-    }
 
     if (quantity < 1 || quantity > 2000 || start_address + quantity > MAX_COILS) {
         response[0] = MODBUS_READ_COILS | 0x80; // Exception
@@ -194,7 +180,7 @@ uint16_t writeMultipleCoils(uint8_t* request, uint8_t* response) {
     uint16_t quantity = (request[3] << 8) | request[4];
     uint8_t byte_count = request[5];
 
-    if (quantity < 1 || quantity > 1968 || start_address + quantity > MAX_COILS ||
+    if (quantity < 1 || quantity > 100 || start_address + quantity > MAX_COILS ||
         byte_count != (quantity + 7) / 8) {
         response[0] = MODBUS_WRITE_MULTIPLE_COILS | 0x80;
         response[1] = MODBUS_EXCEPTION_ILLEGAL_DATA_ADDR;

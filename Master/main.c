@@ -1,89 +1,142 @@
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <sys/ioctl.h>
-#include <linux/spi/spidev.h>
-#include <string.h>
-#include <errno.h>
+#include "./codes.h"
+#include "./crc.h"
+#include "./send_frame_fun.h"
+#include "./spi_fun.h"
 
-#define SPI_DEVICE1 "/dev/spidev0.0"
-#define SPI_DEVICE2 "/dev/spidev0.1"
-#define SPI_MODE SPI_MODE_0
-#define SPI_BITS_PER_WORD 8
-#define SPI_SPEED 50000  // 50 kHz
 #define BUFFER_SIZE 257 // Jeden dodatkowy bajt na przesunięcie
-#define WAIT_TIME 1
 
-int init_spi_device(const char *device, uint8_t mode, uint8_t bits, uint32_t speed) {
-    int fd = open(device, O_RDWR);
-    if (fd < 0) {
-        perror("Failed to open SPI device");
-        return -1;
+int slave_1 = 0;
+int slave_2 = 0;
+
+int pReadBinaryIO(uint8_t* rx_data, uint8_t* tx_data, char* io_type) {
+    int byte_count = rx_data[1]; // Liczba bajtów z danymi
+    uint16_t start_address = (tx_data[1] << 8) | tx_data[2]; // Adres startowy rejestru
+    uint16_t num_coils = (tx_data[3] << 8) | tx_data[4]; // Ile cewek ma zostać odczytanych
+
+    if (!validateCRC(rx_data, byte_count)) {
+        return 3;
     }
 
-    if (ioctl(fd, SPI_IOC_WR_MODE, &mode) == -1) {
-        perror("Can't set SPI mode");
-        close(fd);
-        return -1;
+    uint16_t iterator = 0;
+    for (int byte = 0; byte < byte_count; byte++)
+    {
+        uint16_t coil_value = rx_data[2 + byte]; // Odczytaj wartość wyjścia
+        for (int bit = 7; bit >= 0 && iterator < num_coils; bit--)
+        {
+            if (coil_value & (1 << (7 - bit))) {
+                printf("%s %d (%d:%d): ON\n", io_type, iterator+start_address, byte, iterator+start_address);
+            } else {
+                printf("%s %d (%d:%d): OFF\n", io_type, iterator+start_address, byte, iterator+start_address);
+            }
+            iterator++;
+        }   
     }
-
-    if (ioctl(fd, SPI_IOC_WR_BITS_PER_WORD, &bits) == -1) {
-        perror("Can't set bits per word");
-        close(fd);
-        return -1;
-    }
-
-    if (ioctl(fd, SPI_IOC_WR_MAX_SPEED_HZ, &speed) == -1) {
-        perror("Can't set max speed hz");
-        close(fd);
-        return -1;
-    }
-
-    return fd;
+    return 0; 
 }
 
-struct spi_ioc_transfer;
+int pReadAnalogIO(uint8_t* rx_data, uint8_t* tx_data, char* io_type) {
+    int byte_count = rx_data[1]; // Liczba bajtów z danymi
+    uint16_t start_address = (tx_data[1] << 8) | tx_data[2]; // Adres startowy rejestru
 
-int transfer_spi_data(struct spi_ioc_transfer tr, int slave_1) {
-    int ret;
-    // Prześlij rządanie do slave-a
-    ret = ioctl(slave_1, SPI_IOC_MESSAGE(1), &tr);
-    if (ret < 1) {
-        perror("Failed to send SPI message");
-        close(slave_1);
-        return EXIT_FAILURE;
+    if (!validateCRC(rx_data, byte_count)) {
+        return 3;
     }
 
-    // Zaczekaj chwilę, aby dane mogły być przetworzone
-    sleep(WAIT_TIME);
-
-    // Odbierz dane z slave-a
-    ret = ioctl(slave_1, SPI_IOC_MESSAGE(1), &tr);
-    if (ret < 1) {
-        perror("Failed to send SPI message");
-        close(slave_1);
-        return EXIT_FAILURE;
+    for (int i = 0; i < byte_count / 2; i++) {
+        uint16_t reg_value = (rx_data[2 + 2 * i] << 8) | rx_data[3 + 2 * i];
+        printf("%s %d: 0x%04X\n", io_type, start_address+i, reg_value);
     }
 
     return 0;
 }
 
+int pWriteCoil(uint8_t* rx_data) {
+    // Znamy ramkę odpowiedzi, (bez CRC) ma 5 bajtów:
+    // Do funkcji musimy podać długość ramki pomniejszoną o 2
+    if (!validateCRC(rx_data, 3)) {
+        return 3; 
+    }
+
+    uint16_t coil_address = (rx_data[1] << 8) | rx_data[2]; 
+    uint16_t coil_value = (rx_data[3] << 8) | rx_data[4]; 
+    printf("Zapisano cewkę %d: %s\n", coil_address, (coil_value == 0xFF00) ? "ON" : "OFF");
+    
+    if (coil_value != 0xFF00 && coil_value != 0x0000) {
+        return 4; 
+    }
+
+    return 0; 
+}
+
+int processFrame(uint8_t* tx_data, uint8_t* rx_data) {
+    // Błąd polecenia, podaj rozkaz od nowa
+    if (rx_data[0] & 0x80) { 
+        // Error message ma zawsze 4 bajty: funkcja + kod błędu + CRC
+        // funkcja i kod błedu są już uwzględniane w funkcji validateCRC a CRC pomijamy
+        // Dlatego jako długość ramki podajemy 0
+        if (!validateCRC(rx_data, 0)) {
+            return 3;
+        }
+        
+        char error_name[MESSAGE_SIZE];
+        strcpy (error_name, decodeError(rx_data[1])); 
+        printf("Błąd: %s (kod: 0x%02X)\n", error_name, rx_data[1]);
+        return 1;
+    }
+
+    // Błąd komunikacji, retransmituj dane
+    if (rx_data[0] != tx_data[0]) { 
+        printf("Odpowiedź niezgodna z żądaniem. Oczekiwano: 0x%02X, otrzymano: 0x%02X\n", tx_data[0], rx_data[0]);
+        return 2;
+    }
+
+    int ret = 0;
+    switch (rx_data[0]) {
+        case MODBUS_READ_COILS:
+            ret = pReadBinaryIO(rx_data, tx_data, "Cewka");
+            break;
+        case MODBUS_READ_DISCRETE_INPUTS:
+            ret = pReadBinaryIO(rx_data, tx_data, "Wejście");
+            break;
+        case MODBUS_READ_HOLDING_REGS:
+            ret = pReadAnalogIO(rx_data, tx_data, "Rejestr");
+            break;
+        case MODBUS_READ_INPUT_REGS:
+            ret = pReadAnalogIO(rx_data, tx_data, "Rejestr wejściowy");    
+            break;
+        case MODBUS_WRITE_SINGLE_COIL:
+            ret = pWriteCoil(rx_data);
+            break;
+        case MODBUS_WRITE_SINGLE_REG:
+            
+            break;
+        case MODBUS_WRITE_MULTIPLE_COILS:
+            
+            break;
+        case MODBUS_WRITE_MULTIPLE_REGS:
+        
+            break;
+        default:
+            return 10; // Nieznana funkcja
+    }
+    return ret;
+}
+
 int main() {
-    int slave_1;
-    int slave_2;
+    int* current_slave = NULL; // Zmienna do przechowywania aktualnego slave'a
     int ret;
     uint8_t mode = SPI_MODE;
     uint8_t bits = SPI_BITS_PER_WORD;
     uint32_t speed = SPI_SPEED;
 
     // Bufory danych
-    uint8_t tx_buf[BUFFER_SIZE] = {0x01, 0x03, 0x00, 0x01, 0x00, 0x01, 0xD5,0xCA};
+    uint8_t tx_buf[BUFFER_SIZE] = {0};
     uint8_t rx_buf[BUFFER_SIZE] = {0};
 
     slave_1 = init_spi_device(SPI_DEVICE1, mode, bits, speed);
-    // slave_2 = init_spi_device(SPI_DEVICE2, mode, bits, speed);    
+    slave_2 = init_spi_device(SPI_DEVICE2, mode, bits, speed);  
 
     // Przygotuj strukturę transferu
     struct spi_ioc_transfer tr = {
@@ -95,31 +148,36 @@ int main() {
         .bits_per_word = bits,
     };
 
-    transfer_spi_data(tr, slave_1);
-
-    uint8_t shifted[BUFFER_SIZE] = {0};
-    for (int i = BUFFER_SIZE - 1; i > 0; i--) {
-        uint8_t high = (i > 0) ? (rx_buf[i - 1] << 4) : 0x00;
-        shifted[i-1] = (rx_buf[i] >> 4) | high;
-    }
-
-    // Wyświetl odebrane dane
-    printf("Received data:\n");
-    for (int i = 0; i < 15; i++) {
-        printf("0x%02X ", rx_buf[i]);
+    chooseSlave(&current_slave, &slave_1, &slave_2);
+    buildFrame(tx_buf);
+    
+    transfer_spi_data(tr, current_slave ? *current_slave : slave_1);
+    printf("Wysłane dane:\n");
+    for (int i = 0; i < 16; i++) {
+        printf("0x%02X ", tx_buf[i]);
     }
     printf("\n");
 
-    printf("Shifted data:\n");
-    for (int i = 0; i < 15; i++) {
+    uint8_t shifted[BUFFER_SIZE] = {0};
+    shift_data(rx_buf, shifted, BUFFER_SIZE);
+
+    printf("Otrzymane dane:\n");
+    for (int i = 0; i < 16; i++) {
         printf("0x%02X ", shifted[i]);
     }
     printf("\n");
-    // Zamknij urządzenie
-    close(slave_1);
-    // close(slave_2);
 
-  
+    uint8_t shifted2[BUFFER_SIZE] = {0};
+    shift_data2(shifted, shifted2, BUFFER_SIZE);
+    printf("Otrzymane dane2:\n");
+    for (int i = 0; i < 16; i++) {
+        printf("0x%02X ", shifted2[i]);
+    }
+    printf("\n");
+
+    int result = processFrame(tx_buf, shifted);
+    close(slave_1);
+    close(slave_2);
 
     return EXIT_SUCCESS;
 }
