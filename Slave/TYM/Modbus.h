@@ -190,7 +190,7 @@ uint16_t writeMultipleCoils(uint8_t* request, uint8_t* response) {
     for (uint16_t i = 0; i < quantity; i++) {
         uint8_t byte_index = i / 8;
         uint8_t bit_index = i % 8;
-        bool bit_value = (request[6 + byte_index] >> bit_index) & 0x01;
+        bool bit_value = (request[6 + byte_index] << bit_index) & 0x80;
         setBit(coils, start_address + i, bit_value);
     }
 

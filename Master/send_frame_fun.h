@@ -60,7 +60,9 @@ void writeSingleRegister(uint8_t* data, uint16_t* pointer) {
     while (coil_value < 0 || coil_value > 65536) {
         printf("Wprowadź wartość rejestru (0 - 65 536 lub 0x0000 - 0xFFFF): ");
         scanf("%d", &coil_value);
-        if (coil_value == 0 && (getchar() == 'x' || getchar() == 'X'))
+        int c = getchar();
+
+        if (coil_value == 0 && (c == 'x' || c == 'X')) 
         {
             char hexstring[4] = {0};
             for (int i = 0; i < 4; i++)
@@ -69,7 +71,14 @@ void writeSingleRegister(uint8_t* data, uint16_t* pointer) {
             }
             coil_value = (int)strtol(hexstring, NULL, 16);
         }
-        
+        else if (c != 'x' && c != 'X' && c != '\n') 
+        {
+            printf("Nieprawidłowy format. Wprowadź wartość w formacie dziesiętnym lub szesnastkowym (0x0000 - 0xFFFF).\n");
+            while (getchar() != '\n' && !feof(stdin));
+            coil_value = -1; 
+            continue; 
+        }
+
         if (coil_value < 0 || coil_value > 65536) {
             printf("Nieprawidłowa wartość (0 - 65 536 lub 0x0000 - 0xFFFF).\n");
             while (getchar() != '\n' && !feof(stdin));
@@ -80,10 +89,11 @@ void writeSingleRegister(uint8_t* data, uint16_t* pointer) {
 }
 
 void writeMultipleCoils(uint8_t* data, uint16_t* pointer, int quantity) {
+    char* input_str = (char*)malloc(quantity+1);
     while(quantity)
     {
-        printf("Wprowadź %d wartości wyjść (0 lub 1) w postaci 011010...(MSB...LSB):\n", quantity);
-        char* input_str = (char*)malloc(quantity+1);
+        printf("Wprowadź %d wartości wyjść (0 lub 1) w postaci 011010...(cewka 1, cewka 2...):\n", quantity);
+        // fgets(input_str, quantity + 1, stdin);
         scanf("%s", input_str);
     
         if (strlen(input_str) != quantity) {
@@ -137,9 +147,9 @@ void writeMultipleRegisters(uint8_t* data, uint16_t* pointer, int quantity) {
 }
 
 uint8_t buildFrame(uint8_t* data) {
-    int choice = 0;
+    int choice = -7;
     uint16_t data_pointer = 0;
-    while (choice < 1 || choice > 8)  // Poprawka: zmiana zakresu wyboru
+    while (choice < 0 || choice > 8)  // Poprawka: zmiana zakresu wyboru
     {
         printf("Wybierz funkcję Modbus:\n");
         printf("1. Odczyt wyjść binarnych\n");
@@ -150,6 +160,7 @@ uint8_t buildFrame(uint8_t* data) {
         printf("6. Zapis pojedynczego rejestru\n");
         printf("7. Zapis wielu wyjść\n");
         printf("8. Zapis wielu rejestrów\n");
+        printf("0. Zakończ\n");
     
         scanf("%d", &choice);
         switch (choice) {
@@ -196,11 +207,17 @@ uint8_t buildFrame(uint8_t* data) {
                 uint16_t register_quantity = getRegisterNumber(data, &data_pointer);
                 writeMultipleRegisters(data, &data_pointer, register_quantity); 
                 break;
+            case 0:
+                break; // Zakończ
             default:
                 printf("Nieprawidłowy wybór. Wybierz ponownie.\n");
                 while (getchar() != '\n' && !feof(stdin));
         }
     }
+    if (data_pointer == 0) {
+        return 0; 
+    }
+    
     addCRC(data, &data_pointer);
 
     return data_pointer;
